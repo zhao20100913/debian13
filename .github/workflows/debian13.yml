@@ -159,3 +159,30 @@ jobs:
           path: dist/*
           compression-level: 0
           retention-days: 7
+
+  release:
+    needs: [kernel, rootfs, boot]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: boot
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum boot.img rootfs.tar.gz kernel.release > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/boot.img
+            dist/rootfs.tar.gz
+            dist/kernel.release
+            dist/SHA256SUMS
+            dist/native-boot.identity
