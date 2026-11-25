@@ -45,11 +45,27 @@ say "stock ROM inputs"
 mkdir -p "$ROM_DIR"
 # The ROM is 6.7 GB and the runner's scratch space is ~14 GB, so stream the
 # tarball straight into tar and keep only the two images the boot chain needs.
-if [ ! -f "$ROM_DIR/vendor_boot.img" ] || [ ! -f "$ROM_DIR/dtbo.img" ]; then
-	url=https://cdnorg.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
-	curl -fsSL --retry 5 --retry-delay 5 -A "Mozilla/5.0" "$url" |
-		tar -xz -C "$ROM_DIR" --wildcards '*/dtbo.img' '*/vendor_boot.img' \
-			'./dtbo.img' './vendor_boot.img' 'dtbo.img' 'vendor_boot.img' || true
+# The Xiaomi CDN throttles single connections at times, so every attempt is
+# bounded and the next mirror is tried when the stream stalls.
+MIRRORS="
+https://cdnorg.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
+https://bigota.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
+https://bn.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
+"
+if [ ! -f "$ROM_DIR/dtbo.img" ] || [ ! -f "$ROM_DIR/vendor_boot.img" ]; then
+	for url in $MIRRORS; do
+		echo "stock rom mirror: $url"
+		set +e
+		curl -fL --progress-bar --retry 3 --retry-delay 5 \
+			--speed-limit 40000 --speed-time 120 --max-time 2700 \
+			-A "Mozilla/5.0" "$url" |
+			tar -xz -C "$ROM_DIR" --wildcards '*/dtbo.img' '*/vendor_boot.img'
+		set -e
+		if [ -n "$(find "$ROM_DIR" -name dtbo.img | head -1)" ] &&
+			[ -n "$(find "$ROM_DIR" -name vendor_boot.img | head -1)" ]; then
+			break
+		fi
+	done
 fi
 DTBO=$(find "$ROM_DIR" -name dtbo.img | head -1)
 VB=$(find "$ROM_DIR" -name vendor_boot.img | head -1)
