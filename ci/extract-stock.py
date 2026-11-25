@@ -26,6 +26,19 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def fdt_iterate(data: bytes):
+    """Split a concatenated FDT blob into individual DTBs."""
+    out = []
+    offset = 0
+    while offset + 8 <= len(data):
+        magic, total = struct.unpack_from(">II", data, offset)
+        if magic != 0xD00DFEED or total < 8 or offset + total > len(data):
+            break
+        out.append(data[offset:offset + total])
+        offset += total
+    return out
+
+
 def dtbo_entries(data: bytes, label: str):
     """Parse a v1 DTBO table header and yield each entry's bytes."""
     if len(data) < 32:
@@ -109,7 +122,21 @@ def dump_vendor_boot(image: Path, work: Path, out: Path) -> int:
     # files; accept either, preferring the table.
     table = work / "dtb"
     if table.is_file():
-        entries = dtbo_entries(table.read_bytes(), "vendor_boot dtb")
+        blob = table.read_bytes()
+        print(f"vendor_boot dtb part: {len(blob)} bytes, magic {blob[:4].hex()}")
+        found = fdt_iterate(blob)
+        if len(found) == 14:
+            stage = work / "dtb-concat"
+            stage.mkdir(parents=True, exist_ok=True)
+            paths = []
+            for index, payload in enumerate(found):
+                path = stage / f"dtb-{index:02d}.dtb"
+                path.write_bytes(payload)
+                paths.append(path)
+            return order_bases(paths, out, "vendor_boot dtb concat")
+        if found:
+            print(f"vendor_boot dtb part carries {len(found)} FDTs, not 14")
+        entries = dtbo_entries(blob, "vendor_boot dtb")
         if entries is not None:
             stage = work / "dtb-entries"
             stage.mkdir(parents=True, exist_ok=True)
