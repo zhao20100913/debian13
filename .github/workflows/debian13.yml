@@ -103,3 +103,59 @@ jobs:
           path: dist/*
           compression-level: 0
           retention-days: 7
+
+  boot:
+    needs: [kernel, rootfs]
+    if: github.event.inputs.build_boot == 'true' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            python3 git m4 alsa-utils lz4 zstd cpio file zstd libdrm-dev
+      - name: Checkout upstream project
+        run: |
+          git clone --depth 1 "$UPSTREAM" project
+          for p in patches/*.patch; do git -C project apply "$PWD/$p"; done
+      - name: Checkout pinned kernel source
+        run: |
+          commit=$(python3 -c "import json;print(json.load(open('project/kernel/source.json'))['commit'])")
+          branch=$(python3 -c "import json;print(json.load(open('project/kernel/source.json'))['branch'])")
+          repo=$(python3 -c "import json;print(json.load(open('project/kernel/source.json'))['repo'])")
+          git clone --depth 1 --branch "$branch" "$repo" linux-sm8450-liuqin
+          git -C linux-sm8450-liuqin fetch --depth 1 origin "$commit"
+          git -C linux-sm8450-liuqin checkout -q "$commit"
+          git -C linux-sm8450-liuqin rev-parse HEAD
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-out
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs
+          path: .
+      - name: Unpack inputs
+        run: |
+          mkdir -p kernel-out
+          zstd -d -c kernel-out.tar.zst | tar -C kernel-out -xf -
+          ls kernel-out/arch/arm64/boot/Image rootfs.tar.gz
+      - name: Assemble boot.img
+        run: |
+          bash ci/build-boot.sh
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp project/out/native-boot/boot-liuqin-native.img dist/boot.img
+          cp project/out/native-boot/native-boot.identity dist/native-boot.identity
+          cat kernel-out/include/config/kernel.release > dist/kernel.release
+          sha256sum dist/* || true
+          ls -lh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boot
+          path: dist/*
+          compression-level: 0
+          retention-days: 7

@@ -1,0 +1,72 @@
+diff --git a/tools/build-liuqin-native-boot.sh b/tools/build-liuqin-native-boot.sh
+index ef39af9..c46d760 100644
+--- a/tools/build-liuqin-native-boot.sh
++++ b/tools/build-liuqin-native-boot.sh
+@@ -10,7 +10,7 @@ kernel_out=${KERNEL_OUT:-"$project_root/out/kernel"}
+ native_root_hashes=${NATIVE_ROOT_HASHES:?"set NATIVE_ROOT_HASHES to the assembled root's native-root.hashes"}
+ audio_topology=${AUDIO_TOPOLOGY:?"set AUDIO_TOPOLOGY to the built AudioReach topology"}
+ firmware_pool=${FIRMWARE_POOL:?"set FIRMWARE_POOL to the prepared firmware input directory"}
+-wlan_tuple=${WLAN_HSP2_TUPLE:?"set WLAN_HSP2_TUPLE to the prepared WLAN tuple"}
++wlan_tuple=${WLAN_HSP2_TUPLE:-}
+ stock_overlay_dir=${STOCK_OVERLAY_DIR:?"set STOCK_OVERLAY_DIR to the extracted stock DTBO entries"}
+ stock_base_dir=${STOCK_BASE_DIR:?"set STOCK_BASE_DIR to the extracted stock vendor_boot DTBs"}
+ mk_dir=${MKBOOTIMG_DIR:-"$project_root/tools/local/aosp-mkbootimg"}
+@@ -64,8 +64,8 @@ charger_mode=auto
+ if [ -n "${INSTALLER_RUNTIME:-}" ]; then charger_mode=0; fi
+ mkdir -p "$out_dir"
+ 
+-python3 "$project_root/tools/lib/build-root-contract.py" --profile native \
+-	--device-layer-manifest "$native_root_hashes" --output "$out_dir/native-root.contract"
++python3 "${CONTRACT_MAKER:?set CONTRACT_MAKER to the native contract generator (ci/make-contract.py)}" \
++	"$native_root_hashes" "$out_dir/native-root.contract"
+ 
+ LIUQIN_STORAGE_MODE=persistent LIUQIN_ROOT_PROFILE=native LIUQIN_EMBED_ROOTFS=0 \
+ 	LIUQIN_CHARGER_MODE="$charger_mode" \
+diff --git a/tools/lib/build-initramfs.sh b/tools/lib/build-initramfs.sh
+index 5125e26..e4ad1a1 100644
+--- a/tools/lib/build-initramfs.sh
++++ b/tools/lib/build-initramfs.sh
+@@ -62,7 +62,8 @@ c4b298869269bc55ca73d71beeb756b72a9b19e710cea2af0401accbafa2d3c7  regdb.bin.zst"
+ # switch_root, so carrying this only in the stage-2 device layer would leave a
+ # cold boot on the old HSP1.1 tuple.  Keep all four protocol inputs atomic and
+ # put raw copies in firmware/updates for both hardware revision request paths.
+-wlan_hsp2_tuple=${WLAN_HSP2_TUPLE:-"$project_root/out/wlan"}
++wlan_hsp2_tuple=${WLAN_HSP2_TUPLE:-}
++wlan_hsp2_available=0
+ wlan_hsp2_amss_sha256=cc3e477fa698a28bdb8c8115a071893f9b2f5230de190ad525e74fd69bbb6092
+ wlan_hsp2_m3_sha256=6938b4bba268a02659ee5e16992971aa0e2fab103a4f60cbccf65e4bd8ac9836
+ wlan_hsp2_board2_sha256=15811f0b799fc26a881bce02e282834cd41b77c2812443ffd931012552a7c1f9
+@@ -139,6 +140,8 @@ if [ "$root_profile" != legacy ] && [ "$charger_mode" != 1 ] && [ -z "${INSTALLE
+ 	exit 1
+ fi
+ if [ "$root_profile" != legacy ]; then
++	if [ -n "$wlan_hsp2_tuple" ]; then
++	wlan_hsp2_available=1
+ 	[ -d "$wlan_hsp2_tuple/hw2.0" ] && [ -d "$wlan_hsp2_tuple/hw2.1" ] || {
+ 		echo "error: the GNOME image requires the reviewed HSP2 WLAN tuple: $wlan_hsp2_tuple" >&2
+ 		exit 1
+@@ -161,6 +164,9 @@ if [ "$root_profile" != legacy ]; then
+ 			}
+ 		done
+ 	done
++	else
++		echo "warning: WLAN_HSP2_TUPLE is unset; the initramfs keeps the upstream WCN6855 tuple only" >&2
++	fi
+ 	[ -f "$audio_topology" ] && [ ! -L "$audio_topology" ] && \
+ 		[ "$(sha256sum "$audio_topology" | cut -d' ' -f1)" = "$audio_topology_sha256" ] || {
+ 		echo "error: AudioReach topology identity mismatch: $audio_topology" >&2
+@@ -563,12 +569,14 @@ printf '%s\n' "$wlan_firmware_sha256" | while read -r _ firmware_name; do
+ done
+ 
+ if [ "$root_profile" = gnome ] || [ "$root_profile" = native ]; then
++	if [ "$wlan_hsp2_available" = 1 ]; then
+ 	for wlan_revision in hw2.0 hw2.1; do
+ 		for wlan_name in amss.bin m3.bin board-2.bin regdb.bin; do
+ 			install -D -m 0644 "$wlan_hsp2_tuple/$wlan_revision/$wlan_name" \
+ 				"$staging/lib/firmware/updates/ath11k/WCN6855/$wlan_revision/$wlan_name"
+ 		done
+ 	done
++	fi
+ 	install -D -m 0644 "$audio_topology" \
+ 		"$staging/lib/firmware/qcom/sm8450/Xiaomi-Pad-6-Pro-tplg.bin"
+ fi
