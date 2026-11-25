@@ -62,7 +62,8 @@ def dump_dtbo(image: Path, out: Path) -> int:
 def decompress(payload: bytes) -> bytes:
     if payload[:2] == b"\x1f\x8b":
         return gzip.decompress(payload)
-    if payload[:4] == b"\x04\x22\x4d\x18":
+    if payload[:4] in (b"\x04\x22\x4d\x18", b"\x02\x21\x4c\x18"):
+        # LZ4 frame, and the legacy frame Qualcomm uses for vendor_boot.
         return subprocess.run(["lz4", "-d", "-c"], input=payload, check=True,
                               stdout=subprocess.PIPE).stdout
     if payload[:6] == b"\xfd7zXZ\x00":
@@ -124,10 +125,16 @@ def dump_vendor_boot(image: Path, work: Path, out: Path) -> int:
 
     ramdisk = work / "vendor_ramdisk"
     if not ramdisk.is_file():
-        candidates = [p for p in work.iterdir() if p.is_file() and "ramdisk" in p.name]
+        candidates = sorted(p for p in work.iterdir()
+                            if p.is_file() and p.name.startswith("vendor_ramdisk"))
+        if not candidates:
+            candidates = sorted(p for p in work.iterdir()
+                                if p.is_file() and "ramdisk" in p.name
+                                and "-by-name" not in p.name)
         if not candidates:
             raise SystemExit(f"vendor_boot ramdisk not found under {work}")
         ramdisk = candidates[0]
+        print(f"vendor_boot ramdisk: {ramdisk.name}")
     payload = decompress(ramdisk.read_bytes())
     stage = work / "ramdisk-tree"
     stage.mkdir(parents=True, exist_ok=True)
