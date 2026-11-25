@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-kernel-${{ hashFiles('patches/**', 'ci/**') }}
+          key: ccache-kernel-${{ hashFiles('patches/**') }}
           restore-keys: ccache-kernel-
       - name: Build kernel
         run: |
@@ -145,7 +145,16 @@ jobs:
       - name: Assemble boot.img
         run: |
           bash ci/build-boot.sh
+      - name: Keep stock inputs for diagnosis
+        if: always()
+        run: |
+          mkdir -p dist
+          if [ -d bootwork/stock ]; then
+            tar -C bootwork/stock -czf dist/stock-inputs.tar.gz . || true
+            ls -l dist/stock-inputs.tar.gz || true
+          fi
       - name: Collect
+        if: success()
         run: |
           mkdir -p dist
           cp project/out/native-boot/boot-liuqin-native.img dist/boot.img
@@ -154,6 +163,7 @@ jobs:
           sha256sum dist/* || true
           ls -lh dist
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: boot
           path: dist/*
