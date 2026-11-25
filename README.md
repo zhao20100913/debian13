@@ -8,7 +8,7 @@
 流程复用同一套内核、固件闭包、initramfs stage-1 和 boot.img 装配，只把用户态换成
 Debian 13 + denial。
 
-## 产物
+## 产物（[v0.1.0-debian13](https://github.com/zhao20100913/debian13/releases/tag/v0.1.0-debian13)）
 
 | 文件 | 说明 |
 |---|---|
@@ -57,6 +57,16 @@ sudo sync && sudo reboot
 ```
 
 `/home` 在独立分区（`LIUQIN_HOME`）上，替换根不影响用户数据。
+
+## 构建验证记录（v0.1.0-debian13）
+
+- 内核：`c25f056e`，`.config` sha256 与 `kernel/source.json` 一致，
+  `kernel.release = 6.17.0-rc1-liuqin-next20261112b-gc25f056e0c20`
+- boot.img：`ANDROID!` v2 头、page 4096、Image.gz 18.1 MB、ramdisk 35.5 MB（gzip）
+- boot.img 设备树：`__symbols__` 已导出，`model = "Xiaomi Pad 6 Pro"`
+- initramfs：`/etc/liuqin-storage-mode=persistent`、`/etc/liuqin-root-profile=native`、
+  native-root contract 首条 pin 指向 `/etc/liuqin-native-root`
+- rootfs：Debian 13.8 arm64，`deniald 0.6.8` 可在该 root 内执行
 
 ## 已验证 / 未验证
 
