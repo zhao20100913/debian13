@@ -1,0 +1,91 @@
+name: publish release
+
+# Assemble a release straight from the artifacts of earlier runs, so the
+# ~70 MB boot image and the 553 MB rootfs never have to travel through the
+# machine that dispatched the build.
+on:
+  workflow_dispatch:
+    inputs:
+      boot_run:
+        description: "run id carrying the boot artifact"
+        required: true
+        type: string
+      rootfs_run:
+        description: "run id carrying the rootfs + kernel-out artifacts"
+        required: true
+        type: string
+      tag:
+        description: "release tag"
+        required: true
+        default: "v0.1.0-debian13"
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: boot
+          run-id: ${{ inputs.boot_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs
+          run-id: ${{ inputs.rootfs_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+      - name: Verify the boot image shape
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq device-tree-compiler python3
+          python3 - <<'PY'
+          import gzip, struct, sys
+          data = open('dist/boot.img', 'rb').read()
+          print('boot.img bytes:', len(data))
+          print('magic:', data[:8].decode('ascii', 'replace'))
+          kernel_size, ramdisk_size, os_version, header_size = struct.unpack_from('<4I', data, 8)
+          print('header: kernel', kernel_size, 'ramdisk', ramdisk_size,
+                'os', hex(os_version), 'header_size', header_size)
+          if data[:8] != b'ANDROID!':
+              sys.exit('not an android boot image')
+          ramdisk = data[header_size + kernel_size:header_size + kernel_size + ramdisk_size]
+          print('ramdisk magic:', ramdisk[:2].hex(), '(1f8b is gzip)')
+          open('/tmp/ramdisk.gz', 'wb').write(ramdisk)
+          open('/tmp/Image.gz', 'wb').write(data[header_size:header_size + kernel_size])
+          PY
+          mkdir -p /tmp/rd && cd /tmp/rd && gzip -dc /tmp/ramdisk.gz | cpio -idm --quiet
+          ls -l /tmp/rd/init /tmp/rd/bin/busybox /tmp/rd/etc/liuqin-storage-mode \
+                /tmp/rd/etc/liuqin-root-profile /tmp/rd/etc/liuqin-native-root.contract
+          cat /tmp/rd/etc/liuqin-storage-mode /tmp/rd/etc/liuqin-root-profile
+          head -3 /tmp/rd/etc/liuqin-native-root.contract
+          grep -c 'liuqin-native-root-v1' /tmp/rd/init || true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum boot.img rootfs.tar.gz kernel.release > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: Debian 13 for Xiaomi Pad 6 Pro ${{ inputs.tag }}
+          body: |
+            Debian 13 (trixie) rootfs + mainline kernel + boot.img for Xiaomi Pad 6 Pro (liuqin).
+
+            Built by `.github/workflows/debian13.yml` from the pinned kernel commit
+            and the upstream project's BUILD.md pipeline, with denial as the desktop.
+
+            See the repository README for install steps and known limits.
+            Built artifacts are not device-tested.
+          files: |
+            dist/boot.img
+            dist/rootfs.tar.gz
+            dist/kernel.release
+            dist/SHA256SUMS
+            dist/native-boot.identity
