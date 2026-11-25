@@ -9,10 +9,10 @@ on:
         default: false
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - ".github/workflows/**"
       - "ci/**"
-  tags: ["v*"]
 
 concurrency:
   group: debian13-${{ github.ref }}
