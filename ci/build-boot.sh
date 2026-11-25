@@ -48,7 +48,11 @@ python3 ci/pool.py
 say "native root manifest + contract"
 rm -rf "$WORK/native-root"
 mkdir -p "$WORK/native-root"
-tar -xzf rootfs.tar.gz -C "$WORK/native-root"
+# The rootfs archive carries static /dev nodes (created by mmdebstrap as
+# root); the manifest only needs regular files, and the fsck runtime only
+# needs the distribution libraries.
+tar -xzf rootfs.tar.gz -C "$WORK/native-root" --no-same-owner \
+	--exclude='./dev/*' --exclude='./proc/*' --exclude='./sys/*' 
 python3 - "$WORK/native-root" "$WORK/native-root.hashes" <<'PY'
 import hashlib, sys
 from pathlib import Path
