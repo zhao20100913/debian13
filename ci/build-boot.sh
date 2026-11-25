@@ -3,13 +3,17 @@
 #
 # Needs : kernel-out/ (kernel job), rootfs.tar.gz (rootfs job), the stock
 #         fastboot ROM (DTBO table + vendor_boot DTBs)
-# Writes: out/native-boot/boot-liuqin-native.img + identity file
+# Writes: project/out/native-boot/boot-liuqin-native.img + identity file
 set -euo pipefail
 
 PROJECT=${PROJECT:-$PWD/project}
 KERNEL_OUT=${KERNEL_OUT:-$PWD/kernel-out}
 ROM_DIR=${ROM_DIR:-$PWD/rom}
 WORK=${WORK:-$PWD/bootwork}
+ROM_URL=${ROM_URL:-https://cdnorg.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz}
+MIRRORS=${MIRRORS:-"$ROM_URL
+https://bigota.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
+https://cdn-ota.azureedge.net/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz"}
 
 say() { printf '\n==> %s\n' "$*"; }
 
@@ -41,37 +45,6 @@ say "firmware pool"
 cd "$OLDPWD"
 python3 ci/pool.py
 
-say "stock ROM inputs"
-mkdir -p "$ROM_DIR"
-# The ROM is 6.7 GB and the runner's scratch space is ~14 GB, so stream the
-# tarball straight into tar and keep only the two images the boot chain needs.
-# The Xiaomi CDN throttles single connections at times, so every attempt is
-# bounded and the next mirror is tried when the stream stalls.
-MIRRORS="
-https://cdnorg.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
-https://bigota.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
-https://bn.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
-"
-if [ ! -f "$ROM_DIR/dtbo.img" ] || [ ! -f "$ROM_DIR/vendor_boot.img" ]; then
-	for url in $MIRRORS; do
-		echo "stock rom mirror: $url"
-		set +e
-		curl -fL --progress-bar --retry 3 --retry-delay 5 \
-			--speed-limit 40000 --speed-time 120 --max-time 2700 \
-			-A "Mozilla/5.0" "$url" |
-			tar -xz -C "$ROM_DIR" --wildcards '*/dtbo.img' '*/vendor_boot.img'
-		set -e
-		if [ -n "$(find "$ROM_DIR" -name dtbo.img | head -1)" ] &&
-			[ -n "$(find "$ROM_DIR" -name vendor_boot.img | head -1)" ]; then
-			break
-		fi
-	done
-fi
-DTBO=$(find "$ROM_DIR" -name dtbo.img | head -1)
-VB=$(find "$ROM_DIR" -name vendor_boot.img | head -1)
-[ -n "$DTBO" ] && [ -n "$VB" ] || { echo "stock images not extracted" >&2; exit 1; }
-python3 ci/extract-stock.py "$DTBO" "$VB" "$WORK/stock/dtbo" "$WORK/stock/vendor_boot/dtbs"
-
 say "native root manifest + contract"
 rm -rf "$WORK/native-root"
 mkdir -p "$WORK/native-root"
@@ -84,15 +57,70 @@ rows = []
 for path in sorted(root.rglob("*")):
     if path.is_symlink() or not path.is_file():
         continue
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    rows.append(f"{digest}  /{path.relative_to(root)}")
+    rows.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  /{path.relative_to(root)}")
 out.write_text("\n".join(rows) + "\n")
 print(f"manifest: {len(rows)} files")
 PY
 chmod 0644 "$WORK/native-root.hashes"
+rm -f rootfs.tar.gz
+
+say "stock ROM images"
+mkdir -p "$ROM_DIR"
+stock_tgz=$ROM_DIR/liuqin_images.tgz
+if [ ! -f "$ROM_DIR/dtbo.img" ] || [ ! -f "$ROM_DIR/vendor_boot.img" ]; then
+	# The Xiaomi CDN throttles one connection to a crawl at times, and the
+	# whole 6.7 GB has to be read to reach vendor_boot.img (it sorts behind
+	# super.img).  Fetch 1 MiB-aligned ranges over many connections into a
+	# preallocated file, then extract the two members.  Falls back to a plain
+	# streaming download when the CDN refuses ranges.
+	fetch_ranges() {
+		local url=$1 size=$2 conns=16 chunk i start end
+		rm -f "$stock_tgz"
+		truncate -s "$size" "$stock_tgz"
+		chunk=$(( ((size + conns - 1) / conns + 1048575) / 1048576 * 1048576 ))
+		for ((i = 0; i < conns; i++)); do
+			start=$(( i * chunk ))
+			[ "$start" -lt "$size" ] || break
+			end=$(( start + chunk - 1 ))
+			[ "$end" -lt "$size" ] || end=$(( size - 1 ))
+			curl -fsL --retry 4 --retry-delay 3 --speed-limit 20000 --speed-time 120 \
+				-A "Mozilla/5.0" -r "$start-$end" "$url" |
+				dd of="$stock_tgz" bs=1M seek=$((start / 1048576)) conv=notrunc status=none &
+		done
+		wait
+	}
+	for url in $MIRRORS; do
+		echo "stock rom mirror: $url"
+		size=$(curl -fsIL -A "Mozilla/5.0" --max-time 60 "$url" |
+			awk 'tolower($1)=="content-length:" {print $2}' | tr -d '\r' | tail -1)
+		echo "content-length: ${size:-unknown}"
+		case $size in ''|*[!0-9]*) continue ;; esac
+		[ "$size" -gt 100000000 ] || continue
+		if ! fetch_ranges "$url" "$size"; then
+			echo "range download failed; trying the next mirror"
+			continue
+		fi
+		set +e
+		tar -xzf "$stock_tgz" -C "$ROM_DIR" --wildcards '*/dtbo.img' '*/vendor_boot.img' 2>/dev/null
+		set -e
+		if [ -n "$(find "$ROM_DIR" -name dtbo.img | head -1)" ] &&
+			[ -n "$(find "$ROM_DIR" -name vendor_boot.img | head -1)" ]; then
+			rm -f "$stock_tgz"
+			break
+		fi
+		rm -f "$stock_tgz"
+	done
+fi
+
+DTBO=$(find "$ROM_DIR" -name dtbo.img | head -1)
+VB=$(find "$ROM_DIR" -name vendor_boot.img | head -1)
+[ -n "$DTBO" ] && [ -n "$VB" ] || { echo "stock images not extracted" >&2; exit 1; }
+ls -l "$DTBO" "$VB"
+python3 ci/extract-stock.py "$DTBO" "$VB" "$WORK/stock/dtbo" "$WORK/stock/vendor_boot/dtbs"
+rm -f "$DTBO" "$VB"
 
 say "boot image"
-rm -rf out/native-boot
+rm -rf "$PROJECT/out/native-boot"
 KERNEL_SOURCE=${KERNEL_SOURCE:-$PWD/linux-sm8450-liuqin} \
 KERNEL_OUT=$KERNEL_OUT \
 NATIVE_ROOT_HASHES=$WORK/native-root.hashes \
