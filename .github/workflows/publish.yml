@@ -45,27 +45,40 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq device-tree-compiler python3
-          python3 - <<'PY'
-          import gzip, struct, sys
+          python3 - <<'PYVERIFY'
+          import struct, subprocess
           data = open('dist/boot.img', 'rb').read()
-          print('boot.img bytes:', len(data))
-          print('magic:', data[:8].decode('ascii', 'replace'))
-          kernel_size, ramdisk_size, os_version, header_size = struct.unpack_from('<4I', data, 8)
-          print('header: kernel', kernel_size, 'ramdisk', ramdisk_size,
-                'os', hex(os_version), 'header_size', header_size)
-          if data[:8] != b'ANDROID!':
-              sys.exit('not an android boot image')
-          ramdisk = data[header_size + kernel_size:header_size + kernel_size + ramdisk_size]
-          print('ramdisk magic:', ramdisk[:2].hex(), '(1f8b is gzip)')
+          assert data[:8] == b'ANDROID!', 'not an Android boot image'
+          (kernel_size, kernel_addr, ramdisk_size, ramdisk_addr, second_size,
+           second_addr, tags_addr, page_size, header_version) = struct.unpack_from('<9I', data, 8)
+          print(f'boot.img: {len(data)} bytes, header v{header_version}, page {page_size}')
+          print(f'  kernel {kernel_size} @ {kernel_addr:#x}')
+          print(f'  ramdisk {ramdisk_size} @ {ramdisk_addr:#x}')
+          kernel_gz = data[page_size:page_size + kernel_size]
+          ramdisk_off = page_size + (kernel_size + page_size - 1) // page_size * page_size
+          ramdisk = data[ramdisk_off:ramdisk_off + ramdisk_size]
+          open('/tmp/Image.gz', 'wb').write(kernel_gz)
           open('/tmp/ramdisk.gz', 'wb').write(ramdisk)
-          open('/tmp/Image.gz', 'wb').write(data[header_size:header_size + kernel_size])
-          PY
+          print('  Image.gz magic', kernel_gz[:2].hex(), ' ramdisk magic', ramdisk[:2].hex())
+          # The device tree follows the ramdisk; ABL applies its stock overlay to
+          # it, so it must still carry the exported symbol table.
+          dtb_at = data.find(b'\xd0\x0d\xfe\xed', ramdisk_off + ramdisk_size)
+          print('  dtb at', dtb_at)
+          if dtb_at >= 0:
+              open('/tmp/boot.dtb', 'wb').write(data[dtb_at:])
+              dts = subprocess.run(['dtc', '-I', 'dtb', '-O', 'dts', '/tmp/boot.dtb'],
+                                   capture_output=True, text=True)
+              if dts.returncode == 0:
+                  text = dts.stdout
+                  print('  __symbols__ node:', text.count('__symbols__'))
+                  print('  model:', [l for l in text.splitlines() if 'model =' in l][:1])
+              else:
+                  print('  dtc failed:', dts.stderr[:200])
+          PYVERIFY
           mkdir -p /tmp/rd && cd /tmp/rd && gzip -dc /tmp/ramdisk.gz | cpio -idm --quiet
-          ls -l /tmp/rd/init /tmp/rd/bin/busybox /tmp/rd/etc/liuqin-storage-mode \
-                /tmp/rd/etc/liuqin-root-profile /tmp/rd/etc/liuqin-native-root.contract
+          ls -l /tmp/rd/init /tmp/rd/bin/busybox /tmp/rd/etc/liuqin-storage-mode /tmp/rd/etc/liuqin-root-profile
           cat /tmp/rd/etc/liuqin-storage-mode /tmp/rd/etc/liuqin-root-profile
           head -3 /tmp/rd/etc/liuqin-native-root.contract
-          grep -c 'liuqin-native-root-v1' /tmp/rd/init || true
       - name: Checksums
         run: |
           cd dist
