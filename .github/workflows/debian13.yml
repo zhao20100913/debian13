@@ -1,0 +1,105 @@
+name: Debian 13 for Xiaomi Pad 6 Pro
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_boot:
+        description: "Also assemble boot.img (needs the 6.7 GB stock fastboot ROM)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "ci/**"
+  tags: ["v*"]
+
+concurrency:
+  group: debian13-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM: https://github.com/yzddmr6/xiaomipad-6pro-mainline.git
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential bc bison flex libssl-dev libelf-dev \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu \
+            python3 git ccache kmod rsync libdrm-dev zstd cpio
+      - name: Checkout upstream project
+        run: |
+          git clone --depth 1 "$UPSTREAM" project
+          for p in patches/*.patch; do git -C project apply "$PWD/$p"; done
+          git -C project rev-parse HEAD
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-kernel-${{ hashFiles('patches/**', 'ci/**') }}
+          restore-keys: ccache-kernel-
+      - name: Build kernel
+        run: |
+          bash ci/build-kernel.sh
+      - name: Collect
+        run: |
+          mkdir -p dist
+          tar -C kernel-out -cf - . | zstd -3 -T0 -o dist/kernel-out.tar.zst
+          ls -lh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-out
+          path: dist/kernel-out.tar.zst
+          compression-level: 0
+          retention-days: 7
+
+  rootfs:
+    needs: kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mmdebstrap qemu-user-static binfmt-support \
+            debian-archive-keyring zstd cpio
+          sudo update-binfmts --enable qemu-aarch64
+          ls /proc/sys/fs/binfmt_misc/ | grep -i aarch64
+      - name: Checkout upstream project
+        run: |
+          git clone --depth 1 "$UPSTREAM" project
+          for p in patches/*.patch; do git -C project apply "$PWD/$p"; done
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-out
+          path: .
+      - name: Unpack kernel
+        run: |
+          mkdir kernel-out
+          zstd -d -c kernel-out.tar.zst | tar -C kernel-out -xf -
+          ls kernel-out/arch/arm64/boot/
+      - name: Build Debian 13 rootfs
+        run: |
+          sudo -E bash ci/build-rootfs.sh
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp rootfs.tar.gz dist/
+          cat kernel-out/include/config/kernel.release > dist/kernel.release
+          ls -lh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs
+          path: dist/*
+          compression-level: 0
+          retention-days: 7

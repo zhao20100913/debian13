@@ -1,0 +1,101 @@
+diff --git a/initramfs/init b/initramfs/init
+index 4fa235b..d5c08fc 100755
+--- a/initramfs/init
++++ b/initramfs/init
+@@ -518,78 +518,35 @@ storage_native_root_ok() {
+ 		[ "$("$BB" sha256sum "$storage_native_file" | "$BB" cut -d' ' -f1)" = "$storage_native_hash" ] ||
+ 			storage_native_reject "hash differs from the contract: $storage_native_path" || return 1
+ 	done <"$storage_native_contract"
++	# Debian profile: this build replaces the Ubuntu+GNOME device layer with a
++	# Debian 13 root carrying the denial compositor.  The pins above (marker,
++	# kernel release, the pinned firmware and the desktop binaries) are still
++	# verified file by file; the distribution-specific unit topology gates of
++	# the project's own root are not applicable here.
+ 	[ "$storage_native_lines" -ge 10 ] && [ "$storage_native_lines" -le 128 ] || return 1
+ 	for storage_native_executable in \
+-		/usr/lib/systemd/systemd /usr/sbin/gdm3 /usr/bin/gnome-shell \
+-		/usr/bin/hexagonrpcd \
+-		/usr/local/bin/busybox /usr/sbin/liuqin-devmode \
+-		/usr/libexec/iio-sensor-proxy \
+-		/usr/local/sbin/liuqin-gnome-storage-guard \
+-		/usr/libexec/liuqin/devmode-gadget \
+-		/usr/local/libexec/liuqin-power-keyd \
+-		/usr/local/libexec/liuqin-power-key-action \
+-		/usr/local/sbin/liuqin-bt-public-addr \
+-		/usr/local/sbin/liuqin-wlan-mac \
+-		/usr/libexec/liuqin-ssc-sample-gate; do
++		/usr/lib/systemd/systemd /usr/bin/deniald /usr/bin/denial-session; do
+ 		[ "$("$BB" stat -c '%a' "$storage_checked_root$storage_native_executable" 2>/dev/null || true)" = 755 ] ||
+ 			storage_native_reject "not executable: $storage_native_executable" || return 1
+ 	done
+-	for storage_native_regular in \
+-		/etc/dconf/db/local.d/locks/00-liuqin-power \
+-		/etc/systemd/system/liuqin-gnome-storage-guard.service \
+-		/usr/lib/systemd/system/liuqin-devmode.service \
+-		/etc/systemd/system/liuqin-power-keyd.service \
+-		/etc/systemd/system/liuqin-backlight-default.service \
+-		/etc/systemd/system/bluetooth.service.d/20-liuqin-public-address.conf \
+-		/etc/systemd/system/liuqin-bt-preconfigure.service \
+-		/etc/systemd/system/liuqin-hexagonrpcd-sdsp.service \
+-		/etc/systemd/system/liuqin-ssc-sample-gate.service \
+-		/etc/systemd/system/liuqin-sensor-stack.target \
+-		/etc/systemd/system/liuqin-wlan-mac.service \
+-		/etc/systemd/system/NetworkManager.service.d/20-liuqin-wlan-mac.conf \
+-		/etc/udev/rules.d/80-liuqin-fastrpc.rules \
+-		/usr/lib/firmware/qcom/sm8450/Xiaomi-Pad-6-Pro-tplg.bin \
+-		/usr/share/qcom/sm8450/Xiaomi/liuqin/sensors/sns_reg_version; do
+-		[ "$("$BB" stat -c '%a' "$storage_checked_root$storage_native_regular" 2>/dev/null || true)" = 644 ] ||
+-			storage_native_reject "project regular-file mode is invalid: $storage_native_regular" || return 1
+-	done
+-	[ -L "$storage_checked_root/etc/systemd/system/basic.target.requires/liuqin-gnome-storage-guard.service" ] ||
+-		storage_native_reject "storage guard is not required by basic.target" || return 1
+-	[ "$("$BB" readlink "$storage_checked_root/etc/systemd/system/basic.target.requires/liuqin-gnome-storage-guard.service")" = ../liuqin-gnome-storage-guard.service ] || return 1
+-	[ ! -e "$storage_checked_root/etc/systemd/system/basic.target.requires/liuqin-snap-root-admission.service" ] &&
+-		[ ! -L "$storage_checked_root/etc/systemd/system/basic.target.requires/liuqin-snap-root-admission.service" ] ||
+-		storage_native_reject "snap admission still gates basic.target" || return 1
+-	[ -L "$storage_checked_root/etc/systemd/system/multi-user.target.wants/liuqin-power-keyd.service" ] ||
+-		storage_native_reject "power-key policy is not enabled" || return 1
+-	[ "$("$BB" readlink "$storage_checked_root/etc/systemd/system/multi-user.target.wants/liuqin-power-keyd.service")" = ../liuqin-power-keyd.service ] || return 1
+-	[ -L "$storage_checked_root/etc/systemd/system/graphical.target.wants/liuqin-backlight-default.service" ] ||
+-		storage_native_reject "backlight default is not enabled" || return 1
+-	[ "$("$BB" readlink "$storage_checked_root/etc/systemd/system/graphical.target.wants/liuqin-backlight-default.service")" = ../liuqin-backlight-default.service ] || return 1
+-	"$BB" grep -qx 'Requires=liuqin-bt-preconfigure.service' \
+-		"$storage_checked_root/etc/systemd/system/bluetooth.service.d/20-liuqin-public-address.conf" ||
+-		storage_native_reject "Bluetooth preconfiguration is not required by BlueZ" || return 1
+-	"$BB" grep -qx 'After=liuqin-bt-preconfigure.service' \
+-		"$storage_checked_root/etc/systemd/system/bluetooth.service.d/20-liuqin-public-address.conf" || return 1
+-	"$BB" grep -qx 'Before=bluetooth.service' \
+-		"$storage_checked_root/etc/systemd/system/liuqin-bt-preconfigure.service" || return 1
+-	"$BB" grep -qx 'ExecStart=/usr/local/sbin/liuqin-bt-public-addr' \
+-		"$storage_checked_root/etc/systemd/system/liuqin-bt-preconfigure.service" || return 1
+-	for storage_native_obsolete_bt_link in \
+-		/etc/systemd/system/bluetooth.service.wants/liuqin-bt-public-addr.service \
+-		/etc/systemd/system/bluetooth.service.requires/liuqin-bt-public-addr.service; do
+-		[ ! -e "$storage_checked_root$storage_native_obsolete_bt_link" ] &&
+-			[ ! -L "$storage_checked_root$storage_native_obsolete_bt_link" ] ||
+-			storage_native_reject "obsolete Bluetooth helper activation remains" || return 1
+-	done
+ 	[ -L "$storage_checked_root/usr/sbin/init" ] ||
+ 		storage_native_reject "/usr/sbin/init is not a symlink" || return 1
+-	[ "$("$BB" readlink "$storage_checked_root/usr/sbin/init")" = ../lib/systemd/systemd ] || return 1
++	case $("$BB" readlink "$storage_checked_root/usr/sbin/init") in
++	../lib/systemd/systemd|/usr/lib/systemd/systemd) ;;
++	*) storage_native_reject "/usr/sbin/init does not point at systemd" || return 1 ;;
++	esac
+ 	[ -L "$storage_checked_root/etc/systemd/system/default.target" ] ||
+ 		storage_native_reject "default.target is not a symlink" || return 1
+-	[ "$("$BB" readlink "$storage_checked_root/etc/systemd/system/default.target")" = /usr/lib/systemd/system/graphical.target ] || return 1
++	case $("$BB" readlink "$storage_checked_root/etc/systemd/system/default.target") in
++	/usr/lib/systemd/system/graphical.target|/lib/systemd/system/graphical.target) ;;
++	*) storage_native_reject "default.target is not graphical.target" || return 1 ;;
++	esac
+ 	[ -L "$storage_checked_root/etc/systemd/system/display-manager.service" ] ||
+ 		storage_native_reject "display-manager.service is not a symlink" || return 1
+-	[ "$("$BB" readlink "$storage_checked_root/etc/systemd/system/display-manager.service")" = /lib/systemd/system/gdm3.service ] || return 1
++	case $("$BB" readlink "$storage_checked_root/etc/systemd/system/display-manager.service") in
++	/usr/lib/systemd/system/sddm.service|/lib/systemd/system/sddm.service) ;;
++	*) storage_native_reject "display-manager.service is not sddm" || return 1 ;;
++	esac
+ 	"$BB" chroot "$storage_checked_root" /usr/lib/systemd/systemd --version >/dev/null 2>&1 ||
+ 		storage_native_reject "systemd will not execute under chroot" || return 1
+ 	return 0
