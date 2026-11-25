@@ -1,5 +1,5 @@
 diff --git a/tools/build-liuqin-native-boot.sh b/tools/build-liuqin-native-boot.sh
-index ef39af9..c46d760 100644
+index ef39af9..7fdce4b 100644
 --- a/tools/build-liuqin-native-boot.sh
 +++ b/tools/build-liuqin-native-boot.sh
 @@ -10,7 +10,7 @@ kernel_out=${KERNEL_OUT:-"$project_root/out/kernel"}
@@ -11,7 +11,19 @@ index ef39af9..c46d760 100644
  stock_overlay_dir=${STOCK_OVERLAY_DIR:?"set STOCK_OVERLAY_DIR to the extracted stock DTBO entries"}
  stock_base_dir=${STOCK_BASE_DIR:?"set STOCK_BASE_DIR to the extracted stock vendor_boot DTBs"}
  mk_dir=${MKBOOTIMG_DIR:-"$project_root/tools/local/aosp-mkbootimg"}
-@@ -64,8 +64,8 @@ charger_mode=auto
+@@ -33,8 +33,9 @@ case $out_dir in */../*|*/..|*/./*) die 'output path must not contain traversal'
+ for input in "$image" "$raw_dtb" "$native_root_hashes" "$audio_topology" "$dtc" "$fdtoverlay"; do
+ 	[ -f "$input" ] || die "input missing: $input"
+ done
+-[ -d "$firmware_pool" ] && [ -d "$wlan_tuple" ] &&
+-	[ -d "$stock_overlay_dir" ] && [ -d "$stock_base_dir" ] || die 'firmware/ROM input directory missing'
++[ -d "$firmware_pool" ] && [ -d "$stock_overlay_dir" ] && [ -d "$stock_base_dir" ] ||
++	die 'firmware/ROM input directory missing'
++[ -z "$wlan_tuple" ] || [ -d "$wlan_tuple" ] || die 'WLAN HSP2 tuple directory missing'
+ [ "$(sha "$mk_dir/unpack_bootimg.py")" = 06b54dd9a07c5281778e29e234e76f6e3faee8bf0c904a5ef88fdee30eeed12e ] ||
+ 	die 'unpack_bootimg.py identity mismatch'
+ [ "$(sha "$mk_dir/mkbootimg.py")" = 37d84b3d162e0bc62e36c1f4e1c63c85ea0caa9f29be023eb2f8efe006ad948c ] ||
+@@ -64,8 +65,8 @@ charger_mode=auto
  if [ -n "${INSTALLER_RUNTIME:-}" ]; then charger_mode=0; fi
  mkdir -p "$out_dir"
  
