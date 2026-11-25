@@ -83,8 +83,11 @@ chroot "$ROOT" systemctl enable sddm.service NetworkManager.service bluetooth.se
 say "human account"
 chroot "$ROOT" /bin/sh -c '
 	set -e
-	useradd -m -u 1000 -s /bin/bash -G sudo,video,render,input,audio,netdev,bluetooth liuqin
+	useradd -m -u 1000 -s /bin/bash liuqin
 	echo "liuqin:liuqin" | chpasswd
+	for group in sudo video render input audio netdev bluetooth plugdev; do
+		getent group "$group" >/dev/null && usermod -aG "$group" liuqin || true
+	done
 	echo "liuqin ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/90-liuqin
 	chmod 0440 /etc/sudoers.d/90-liuqin
 '
