@@ -1,0 +1,25 @@
+name: probe stock rom
+on: workflow_dispatch
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Stream the stock ROM and inspect the images the boot chain needs
+        run: |
+          set -x
+          url=https://cdnorg.d.miui.com/OS2.0.6.0.VMYCNXM/liuqin_images_OS2.0.6.0.VMYCNXM_20250318.0000.00_15.0_cn_c29f6de5df.tgz
+          mkdir -p rom
+          curl -fsSL "$url" | tar -xz -C rom --wildcards '*/dtbo.img' '*/vendor_boot.img' || true
+          find rom -type f -printf '%p %s\n'
+          for f in $(find rom -name '*.img'); do
+            echo "== $f"
+            xxd -l 64 "$f"
+          done
+          python3 - <<'PY'
+          import struct, pathlib
+          for p in pathlib.Path('rom').rglob('*.img'):
+              d = p.read_bytes()[:32]
+              print(p, struct.unpack('>8I', d))
+          PY
